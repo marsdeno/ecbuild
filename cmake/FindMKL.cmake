@@ -18,22 +18,31 @@
 #  MKLROOT           - root directory of the MKL installation
 #  MKL_PATH          - root directory of the MKL installation
 #  MKL_ROOT          - root directory of the MKL installation
+#  MKL_INTERFACE_FULL - interface library suffix/name (default: intel_lp64 on x86_64)
+#  MKL_THREADING     - threading library name suffix (default: sequential,
+#                      or intel_thread when MKL_PARALLEL=ON)
 
 option( MKL_PARALLEL "if mkl shoudl be parallel" OFF )
 
-if( MKL_PARALLEL )
-
-  set( __mkl_lib_par  MKL_LIB_INTEL_THREAD )
-  set( __mkl_lib_name mkl_intel_thread )
-
-  find_package(Threads)
-
-else()
-
-  set( __mkl_lib_par MKL_LIB_SEQUENTIAL )
-  set( __mkl_lib_name mkl_sequential )
-
+if( NOT DEFINED MKL_INTERFACE_FULL )
+  if( CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" )
+    set( MKL_INTERFACE_FULL intel_lp64 CACHE STRING "MKL interface library suffix/name" )
+  else()
+    set( MKL_INTERFACE_FULL intel CACHE STRING "MKL interface library suffix/name" )
+  endif()
 endif()
+
+if( NOT DEFINED MKL_THREADING )
+  if( MKL_PARALLEL )
+    set( MKL_THREADING intel_thread CACHE STRING "MKL threading library suffix/name" )
+  else()
+    set( MKL_THREADING sequential CACHE STRING "MKL threading library suffix/name" )
+  endif()
+endif()
+
+set_property( CACHE MKL_THREADING PROPERTY STRINGS sequential intel_thread gnu_thread tbb_thread )
+
+find_package( Threads )
 
 # Search with priority for MKLROOT, MKL_PATH and MKL_ROOT if set in CMake or env
 find_path(MKL_INCLUDE_DIR mkl.h
@@ -49,36 +58,51 @@ if( MKL_INCLUDE_DIR ) # use include dir to find libs
 
   if( CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" )
     set( __pathsuffix "lib/intel64")
-    set( __libsfx _lp64 )
   else()
     set( __pathsuffix "lib/ia32")
-    set( __libsfx "" )
   endif()
 
-  find_library( MKL_LIB_INTEL
+  find_library( MKL_LIB_INTERFACE
                 PATHS ${MKLROOT} ${MKL_PATH} ${MKL_ROOT} $ENV{MKLROOT} $ENV{MKL_PATH} $ENV{MKL_ROOT}
                 PATH_SUFFIXES lib ${__pathsuffix}
-                NAMES mkl_intel${__libsfx} )
+                NAMES mkl_${MKL_INTERFACE_FULL} )
 
-  find_library( ${__mkl_lib_par}
+  find_library( MKL_LIB_THREADING
                 PATHS ${MKLROOT} ${MKL_PATH} ${MKL_ROOT} $ENV{MKLROOT} $ENV{MKL_PATH} $ENV{MKL_ROOT}
                 PATH_SUFFIXES lib ${__pathsuffix}
-                NAMES ${__mkl_lib_name} )
+                NAMES mkl_${MKL_THREADING} )
 
   find_library( MKL_LIB_CORE
                 PATHS ${MKLROOT} ${MKL_PATH} ${MKL_ROOT} $ENV{MKLROOT} $ENV{MKL_PATH} $ENV{MKL_ROOT}
                 PATH_SUFFIXES lib ${__pathsuffix}
                 NAMES mkl_core )
 
-  if( MKL_PARALLEL )
+  unset( MKL_RUNTIME_LIBRARIES )
+
+  if( MKL_THREADING STREQUAL "intel_thread" )
     find_library( MKL_LIB_IOMP5
                   PATHS ${MKLROOT} ${MKL_PATH} ${MKL_ROOT} $ENV{MKLROOT} $ENV{MKL_PATH} $ENV{MKL_ROOT}
                   PATH_SUFFIXES lib ${__pathsuffix}
                   NAMES iomp5 )
+    list( APPEND MKL_RUNTIME_LIBRARIES ${MKL_LIB_IOMP5} ${CMAKE_THREAD_LIBS_INIT} )
+  elseif( MKL_THREADING STREQUAL "gnu_thread" )
+    find_library( MKL_LIB_GOMP NAMES gomp )
+    if( MKL_LIB_GOMP )
+      list( APPEND MKL_RUNTIME_LIBRARIES ${MKL_LIB_GOMP} )
+    else()
+      list( APPEND MKL_RUNTIME_LIBRARIES gomp )
+    endif()
+    list( APPEND MKL_RUNTIME_LIBRARIES ${CMAKE_THREAD_LIBS_INIT} m ${CMAKE_DL_LIBS} )
+  elseif( MKL_THREADING STREQUAL "tbb_thread" )
+    find_library( MKL_LIB_TBB NAMES tbb )
+    list( APPEND MKL_RUNTIME_LIBRARIES ${MKL_LIB_TBB} ${CMAKE_THREAD_LIBS_INIT} )
+  else()
+    list( APPEND MKL_RUNTIME_LIBRARIES ${CMAKE_THREAD_LIBS_INIT} )
   endif()
 
-  if( MKL_LIB_INTEL AND ${__mkl_lib_par} AND MKL_LIB_CORE )
-    set( MKL_LIBRARIES ${MKL_LIB_INTEL} ${${__mkl_lib_par}} ${MKL_LIB_CORE} ${MKL_LIB_IOMP5} ${CMAKE_THREAD_LIBS_INIT} )
+  if( MKL_LIB_INTERFACE AND MKL_LIB_THREADING AND MKL_LIB_CORE )
+    set( MKL_LIBRARIES ${MKL_LIB_INTERFACE} ${MKL_LIB_THREADING} ${MKL_LIB_CORE} ${MKL_RUNTIME_LIBRARIES} )
+    list( REMOVE_DUPLICATES MKL_LIBRARIES )
   endif()
 
 endif()
@@ -88,4 +112,4 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args( MKL DEFAULT_MSG
                                    MKL_LIBRARIES MKL_INCLUDE_DIRS )
 
-mark_as_advanced( MKL_INCLUDE_DIR MKL_LIB_LAPACK MKL_LIB_INTEL MKL_LIB_SEQUENTIAL MKL_LIB_CORE )
+mark_as_advanced( MKL_INCLUDE_DIR MKL_LIB_LAPACK MKL_LIB_INTERFACE MKL_LIB_THREADING MKL_LIB_CORE )
